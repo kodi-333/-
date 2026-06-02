@@ -1,0 +1,406 @@
+import React, { useState, useEffect } from 'react';
+import { motion, useAnimation } from 'motion/react';
+import { MechanicalResult } from '../types';
+import { 
+  Skull, 
+  CheckCircle2, 
+  AlertTriangle, 
+  Gauge, 
+  RefreshCw, 
+  Play, 
+  Sparkles,
+  Zap
+} from 'lucide-react';
+
+interface PhysicsVisualizerProps {
+  result: MechanicalResult;
+  onRunTest: () => void;
+  isSimulating: boolean;
+  setIsSimulating: (simulating: boolean) => void;
+}
+
+export default function PhysicsVisualizer({ 
+  result, 
+  onRunTest, 
+  isSimulating, 
+  setIsSimulating 
+}: PhysicsVisualizerProps) {
+  const [phase, setPhase] = useState<'idle' | 'falling' | 'impact' | 'finished'>('idle');
+  const [shake, setShake] = useState(false);
+  const bagControls = useAnimation();
+  const cushionControls = useAnimation();
+  const shockwaveControls = useAnimation();
+
+  // Reset animation when inputs change
+  useEffect(() => {
+    setPhase('idle');
+    setShake(false);
+    bagControls.set({ y: 0, scale: 1, rotate: 0 });
+    cushionControls.set({ height: Math.min(result.thickness * 400, 100), scaleY: 1 });
+    shockwaveControls.set({ scale: 0, opacity: 0 });
+  }, [result.weight, result.height, result.thickness]);
+
+  const triggerSimulation = async () => {
+    if (isSimulating) return;
+    setIsSimulating(true);
+    onRunTest();
+    setPhase('falling');
+    setShake(false);
+
+    // Initial setups
+    const scaleHeight = result.height * 80; // Scale height in display px
+    const bufferHeightPx = Math.min(result.thickness * 400, 100);
+
+    // Reset components
+    bagControls.set({ y: 0, scale: 1, rotate: 0 });
+    cushionControls.set({ scaleY: 1 });
+    shockwaveControls.set({ scale: 0, opacity: 0 });
+
+    // Duration based on actual gravity formula t = sqrt(2h / g) with speed modifier for enjoyable visual
+    const realTimeOfFlight = Math.sqrt((2 * result.height) / 9.81);
+    const animDropDuration = Math.max(0.4, realTimeOfFlight * 0.85);
+
+    // 1. Drop Phase
+    await bagControls.start({
+      y: scaleHeight,
+      transition: { 
+        duration: animDropDuration, 
+        ease: [0.55, 0.085, 0.68, 0.53] // Cubic bezier mimicking gravity acceleration (ease-in)
+      }
+    });
+
+    setPhase('impact');
+
+    // 2. Impact Compression Phase (Buffer stops it over its thickness)
+    // Compression duration is based on impact duration
+    const compressDuration = Math.max(0.08, result.impactDuration / 40); // Scaling ms to s nicely
+    
+    // Animate cushion compression
+    const cushionCompressPromise = cushionControls.start({
+      scaleY: 0.15, // 85% compression
+      transition: { duration: compressDuration, ease: 'easeOut' }
+    });
+
+    // Animate bag slowing down and flattening slightly
+    const bagImpactPromise = bagControls.start({
+      y: scaleHeight + (bufferHeightPx * 0.65), // Penetrates buffer pad slightly
+      scaleY: 0.8,
+      scaleX: 1.15,
+      transition: { duration: compressDuration, ease: 'easeOut' }
+    });
+
+    // Shockwave expansion starting
+    const shockwaveColor = result.isDestroyed ? 'rgba(244, 63, 94, 0.8)' : 'rgba(34, 197, 94, 0.8)';
+    const shockwavePromise = shockwaveControls.start({
+      scale: [0.2, 2.5],
+      opacity: [1, 0],
+      transition: { duration: compressDuration * 2.5, ease: 'easeOut' }
+    });
+
+    await Promise.all([cushionCompressPromise, bagImpactPromise, shockwavePromise]);
+
+    // 3. Post-impact: bounce or shatter
+    setPhase('finished');
+    if (result.isDestroyed) {
+      setShake(true);
+      // violent recoil, flip around and crash hard on floor
+      await bagControls.start({
+        y: scaleHeight + (bufferHeightPx * 0.75),
+        rotate: [0, -12, 18, 5, 0],
+        scaleY: [0.8, 1.25, 0.75, 1],
+        scaleX: [1.15, 0.85, 1.1, 1],
+        transition: { duration: 0.6, ease: 'easeInOut' }
+      });
+    } else {
+      // Gentle spring bounce
+      await Promise.all([
+        cushionControls.start({
+          scaleY: 1,
+          transition: { type: 'spring', stiffness: 180, damping: 10 }
+        }),
+        bagControls.start({
+          y: scaleHeight, // bounce back up slightly
+          scaleY: 1,
+          scaleX: 1,
+          transition: { type: 'spring', stiffness: 180, damping: 12 }
+        })
+      ]);
+    }
+
+    setIsSimulating(false);
+  };
+
+  // Convert thickness to pixels for buffer representation
+  const bufferHeightPx = Math.min(result.thickness * 400, 100);
+  // Max height visual offset representation
+  const topGuideOffset = result.height * 80;
+
+  return (
+    <div className="flex flex-col h-full bg-gore-dark border border-gore-border rounded-xl overflow-hidden shadow-2xl relative">
+      {/* Aesthetic Tech/Gore header */}
+      <div className="flex items-center justify-between px-4 py-3 bg-[#110e1a]/80 border-b border-gore-border text-xs text-mono tracking-widest text-[#a855f7] uppercase font-mono">
+        <span className="flex items-center gap-1.5">
+          <Zap className="w-3.5 h-3.5 animate-pulse text-neon-pink" />
+          [ DYNAMIC_DROP_SIMULATION_V1.8 ]
+        </span>
+        <span className="text-gray-500 font-bold">
+          m={result.weight}kg | h={result.height}m
+        </span>
+      </div>
+
+      <div className="p-4 bg-[#0d0b13] flex-1 flex flex-col justify-between relative overflow-hidden">
+        {/* Absolute Background Elements for Gore Aesthetic */}
+        <div className="absolute inset-0 bg-[linear-gradient(rgba(168,85,247,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(168,85,247,0.03)_1px,transparent_1px)] bg-[size:24px_24px] pointer-events-none" />
+        
+        {/* Crosshairs */}
+        <div className="absolute top-4 left-4 text-[#a855f7]/20 font-mono text-[9px] pointer-events-none">+ CRITICAL GRID</div>
+        <div className="absolute bottom-4 right-4 text-[#a855f7]/20 font-mono text-[9px] pointer-events-none">[X] PADDING_AXIS</div>
+        <div className="absolute top-4 right-4 text-[#a855f7]/20 font-mono text-[9px] pointer-events-none">H_MAX: 3.0M</div>
+        
+        {/* Main Canvas Area */}
+        <div className="relative flex-1 min-h-[300px] flex items-end justify-center pb-2">
+          
+          {/* Ruler tape-measure at the left */}
+          <div className="absolute left-2 top-0 bottom-4 w-12 border-r border-[#a855f7]/20 flex flex-col justify-between pointer-events-none text-[10px] text-gray-500 font-mono pr-2 select-none">
+            <div className="text-right">3.0m ──</div>
+            <div className="text-right">2.5m ──</div>
+            <div className="text-right">2.0m ──</div>
+            <div className="text-right">1.5m ──</div>
+            <div className="text-right">1.0m ──</div>
+            <div className="text-right">0.5m ──</div>
+            <div className="text-right">0.0m ──</div>
+          </div>
+
+          {/* Theoretical Crash Target Area */}
+          <div 
+            className="absolute left-16 right-4 border-t border-dashed border-red-500/20 pointer-events-none h-px"
+            style={{ bottom: `${bufferHeightPx + 16}px` }}
+          >
+            <div className="absolute right-0 top-1 text-[8px] text-red-500/40 font-mono bg-gore-bg px-1">
+              衝擊接觸面 (HEIGHT_ZERO)
+            </div>
+          </div>
+
+          {/* Falling bag area */}
+          <div 
+            className="relative w-full max-w-[260px] flex flex-col items-center justify-end select-none"
+            style={{ height: '280px' }}
+          >
+            {/* Height dimension guide lines */}
+            {phase === 'idle' && (
+              <div 
+                className="absolute w-full flex flex-col items-center border-l border-dashed border-neon-purple/40 pointer-events-none font-mono text-[10px]"
+                style={{ 
+                  bottom: `${bufferHeightPx + 16}px`, 
+                  height: `${topGuideOffset}px` 
+                }}
+              >
+                <div className="my-auto bg-gore-dark/90 px-2 py-0.5 border border-gore-border text-neon-purple rounded-md flex items-center gap-1 z-10">
+                  <span>墜落行程:</span>
+                  <span className="font-bold">{result.height.toFixed(1)}m</span>
+                </div>
+                <div className="w-1.5 h-1.5 rounded-full bg-neon-purple absolute top-0 -left-[4px]" />
+                <div className="w-1.5 h-1.5 rounded-full bg-neon-purple absolute bottom-0 -left-[4px]" />
+              </div>
+            )}
+
+            {/* Shockwave circle */}
+            <motion.div
+              animate={shockwaveControls}
+              className={`absolute rounded-full border-4 pointer-events-none z-10 w-24 h-24`}
+              style={{
+                borderColor: result.isDestroyed ? 'rgba(239, 68, 68, 0.7)' : 'rgba(34, 197, 94, 0.7)',
+                shadow: result.isDestroyed ? '0 0 20px #ef4444' : '0 0 20px #22c55e',
+                bottom: `${bufferHeightPx - 20}px`
+              }}
+            />
+
+            {/* Simulated camera bag */}
+            <motion.div
+              animate={bagControls}
+              className={`relative z-20 w-24 h-24 mb-4 select-none ${shake ? 'animate-bounce' : ''}`}
+              style={{
+                // Absolute placement container adjustment
+                position: 'absolute',
+                top: `${280 - bufferHeightPx - 96 - topGuideOffset}px`
+              }}
+            >
+              {/* Backpack Vector/Styling (Classic skater backpack look) */}
+              <div className="w-full h-full relative">
+                
+                {/* Backpack background (Dark charcoal with glowing seams) */}
+                <div className={`w-full h-full bg-[#1e1b29] border-2 rounded-2xl p-2 relative flex flex-col items-center justify-between transition-colors duration-300
+                  ${result.isDestroyed && phase === 'finished' 
+                    ? 'border-red-500 glow-danger' 
+                    : phase === 'impact' 
+                      ? 'border-white glow-purple-lg' 
+                      : 'border-neon-purple glow-purple'
+                  }
+                `}>
+                  {/* Skate straps to hold board */}
+                  <div className="absolute top-3 left-0 right-0 h-1 bg-[#100d18] flex justify-between px-2">
+                    <div className="w-1.5 h-2 bg-neon-purple border border-black/80 rounded" />
+                    <div className="w-1.5 h-2 bg-neon-purple border border-black/80 rounded" />
+                  </div>
+                  <div className="absolute bottom-6 left-0 right-0 h-1 bg-[#100d18] flex justify-between px-2">
+                    <div className="w-1.5 h-2 bg-neon-purple border border-black/80 rounded" />
+                    <div className="w-1.5 h-2 bg-neon-purple border border-black/80 rounded" />
+                  </div>
+
+                  {/* Skateboard strapped inside (if reset/not falling, shows skater vibe) */}
+                  {phase === 'idle' && (
+                    <div className="absolute -left-4 w-32 h-6 rotate-12 bg-zinc-800 border border-neon-pink/40 rounded-full z-10 flex items-center justify-between px-2 shadow-lg">
+                      <div className="w-2.5 h-2.5 rounded-full bg-zinc-900 border border-zinc-600 flex items-center justify-center">
+                        <div className="w-1 h-1 bg-neon-pink rounded-full" />
+                      </div>
+                      <span className="text-[7px] text-zinc-500 font-mono tracking-widest leading-none">SKATE BAG</span>
+                      <div className="w-2.5 h-2.5 rounded-full bg-zinc-900 border border-zinc-600 flex items-center justify-center">
+                        <div className="w-1 h-1 bg-neon-pink rounded-full" />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Handle top strap */}
+                  <div className="w-6 h-2 rounded-t border-t border-x border-neon-purple/50 bg-[#161320] absolute -top-2 left-1/2 -translate-x-1/2" />
+                  
+                  {/* Camera lens element preview panel */}
+                  <div className="w-12 h-12 rounded-full border border-[#2e263f] bg-[#110e1a] relative flex items-center justify-center overflow-hidden my-auto">
+                    {/* Aperture iris blades */}
+                    <div className="absolute inset-1 rounded-full border border-neon-purple/20 bg-black flex items-center justify-center group-hover:scale-105 duration-200">
+                      {/* Glass lens reflection */}
+                      <div className="absolute top-1.5 right-1.5 w-3 h-1 bg-white/20 rounded-full rotate-45" />
+                      
+                      {/* Camera lens dynamic feedback inside */}
+                      {result.isDestroyed && phase === 'finished' ? (
+                        <Skull className="w-6 h-6 text-red-500 animate-pulse" />
+                      ) : (
+                        <div className="w-5 h-5 rounded-full border-2 border-neon-purple/80 flex items-center justify-center">
+                          <div className="w-1.5 h-1.5 bg-neon-purple rounded-full animate-ping" />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Bottom padded reinforcement warning markings */}
+                  <div className="w-full h-2 bg-gradient-to-r from-neon-purple/20 via-neon-purple/40 to-neon-purple/20 rounded-b flex items-center justify-center overflow-hidden gap-1">
+                    <span className="w-1 h-1 rounded-full bg-white opacity-40 animate-pulse" />
+                    <span className="w-1 h-1 rounded-full bg-white opacity-40 animate-pulse" />
+                    <span className="w-1 h-1 rounded-full bg-white opacity-40 animate-pulse" />
+                  </div>
+                </div>
+
+                {/* Crash effect overlays */}
+                {phase === 'finished' && result.isDestroyed && (
+                  <>
+                    <div className="absolute -top-3 -right-3 text-red-500 bg-black border border-red-500 font-mono text-[9px] font-bold px-1.5 py-0.5 rounded shadow-lg animate-bounce z-30">
+                      CRASHED!
+                    </div>
+                    {/* Tiny shattered debris lines using simple HTML blocks */}
+                    <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-full flex justify-between px-1 text-red-500 pointer-events-none select-none text-[15px] font-bold opacity-80">
+                      <span>⚡</span>
+                      <span>💥</span>
+                    </div>
+                  </>
+                )}
+                {phase === 'finished' && !result.isDestroyed && (
+                  <div className="absolute -top-3 -right-3 text-green-400 bg-black border border-green-500 font-mono text-[9px] font-bold px-1.5 py-0.5 rounded shadow-lg animate-pulse z-30 flex items-center gap-0.5">
+                    <Sparkles className="w-2.5 h-2.5 text-green-400" /> SAFE_OK!
+                  </div>
+                )}
+              </div>
+            </motion.div>
+
+            {/* Bottom cushion element */}
+            <motion.div
+              animate={cushionControls}
+              className="w-40 border-t border-x border-[#3b1c67] relative z-10 flex flex-col justify-end"
+              style={{
+                height: `${bufferHeightPx}px`,
+                background: result.isDestroyed 
+                  ? 'linear-gradient(to top, rgba(239,68,68,0.2) 0%, rgba(168,85,247,0.1) 100%)' 
+                  : 'linear-gradient(to top, rgba(168,85,247,0.3) 0%, rgba(168,85,247,0.05) 100%)',
+                boxShadow: phase === 'impact'
+                  ? '0 0 20px rgba(168, 85, 247, 0.5)'
+                  : 'none'
+              }}
+            >
+              {/* Micro height marker inside buffer */}
+              <div className="absolute inset-0 flex flex-col justify-between p-1 border-t border-neon-purple/50">
+                {/* Visual warning hazard lines on the gel cushion pad */}
+                <div className="w-full h-full opacity-30 bg-[repeating-linear-gradient(45deg,transparent,transparent_8px,#a855f7_8px,#a855f7_16px)]" />
+
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <span className="text-[10px] text-neon-purple/70 font-mono bg-[#110e1a] px-1.5 py-0.5 border border-neon-purple/30 rounded scale-90">
+                    緩衝厚度: {(result.thickness * 100).toFixed(1)} cm
+                  </span>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+
+          {/* Ground Platform Grid */}
+          <div className="absolute left-6 right-6 bottom-0 h-4 border-t-2 border-neon-purple bg-[#130f1e] flex items-center justify-between px-4">
+            <div className="h-full w-full bg-[linear-gradient(90deg,rgba(168,85,247,0.15)_1px,transparent_1px)] bg-[size:16px_100%] absolute inset-0 pointer-events-none" />
+            
+            {/* Tiny skateboard icons/wheels lying around for skateboard visual vibe */}
+            <div className="absolute -top-3.5 left-4 flex gap-1 animate-pulse">
+              {/* Skateboard deck schematic */}
+              <div className="w-12 h-1 bg-[#32234e] rounded relative border border-neon-purple/30">
+                <div className="w-1.5 h-1.5 rounded-full bg-zinc-950 absolute -bottom-1 left-1.5" />
+                <div className="w-1.5 h-1.5 rounded-full bg-zinc-950 absolute -bottom-1 right-1.5" />
+              </div>
+            </div>
+            
+            <div className="text-[8px] text-[#a855f7]/60 font-mono tracking-widest absolute inset-x-0 bottom-0 text-center uppercase leading-4">
+              [ COMPACT GROUND STATION ]
+            </div>
+          </div>
+        </div>
+
+        {/* Real-time Telemetry Dashboard (Gore style stats) */}
+        <div className="mt-4 p-3 bg-bore-bg border border-gore-border rounded-lg grid grid-cols-2 gap-2 text-xs font-mono">
+          <div className="flex flex-col border-r border-[#2e263f] pr-2">
+            <span className="text-gray-500 uppercase text-[9px] font-bold tracking-wider">撞擊前速度 (Velocity)</span>
+            <span className="text-white text-sm font-semibold flex items-center gap-1">
+              {result.impactVelocity.toFixed(2)} <span className="text-[10px] text-gray-500">m/s</span>
+              <span className="text-[10px] text-neon-pink">({(result.impactVelocity * 3.6).toFixed(1)} km/h)</span>
+            </span>
+          </div>
+          <div className="flex flex-col pl-2">
+            <span className="text-gray-500 uppercase text-[9px] font-bold tracking-wider">減速重力 (Deceleration)</span>
+            <span className="text-white text-sm font-semibold flex items-center gap-1">
+              <Gauge className="w-3.5 h-3.5 text-neon-purple inline-block" />
+              {result.decelerationG.toFixed(1)} <span className="text-[10px] text-[#a855f7] font-bold">G</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Controller Buttons bottom section */}
+      <div className="p-3 bg-[#130f1e] border-t border-gore-border flex gap-2">
+        <button
+          onClick={triggerSimulation}
+          disabled={isSimulating}
+          className={`flex-1 py-2.5 px-4 rounded-lg font-mono font-bold text-xs uppercase tracking-widest flex items-center justify-center gap-2 border transition-all duration-300
+            ${isSimulating 
+              ? 'bg-zinc-800 border-zinc-700 text-zinc-500 cursor-not-allowed' 
+              : 'bg-[#a855f7] hover:bg-[#b026ff] border-[#c084fc] text-white glow-purple cursor-pointer active:scale-[0.98]'
+            }
+          `}
+        >
+          {isSimulating ? (
+            <>
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              模擬運行中...
+            </>
+          ) : (
+            <>
+              <Play className="w-3.5 h-3.5 fill-current" />
+              觸發墜落測試 (DROP_TEST)
+            </>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
